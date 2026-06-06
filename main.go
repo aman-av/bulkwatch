@@ -1,47 +1,116 @@
 package main
 
 import (
+	"bytes"
 	"compress/gzip"
-	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"os"
+	"path/filepath"
 	"time"
+
+	"github.com/andybalholm/brotli"
 )
 
 const (
-	// NSE Bulk Deal CSV URL
-	nseBaseURL    = "https://nsearchives.nseindia.com/content/equities/bulk.csv"
 	archiveFolder = "archive"
 )
 
-// fetchBulkDealCSV fetches the bulk deal CSV from NSE website
-func fetchBulkDealCSV() ([]byte, error) {
-	// Create a custom transport to force HTTP/1.1
-	transport := &http.Transport{
-		ForceAttemptHTTP2: false,
+// Exchange represents a stock exchange
+type Exchange string
+
+const (
+	NSE Exchange = "NSE"
+	BSE Exchange = "BSE"
+)
+
+// DealType represents the type of deal
+type DealType string
+
+const (
+	BulkDeal  DealType = "bulk"
+	BlockDeal DealType = "block"
+)
+
+// Config holds the configuration for fetching deals
+type Config struct {
+	Exchange  Exchange
+	DealType  DealType
+	FromDate  string
+	ToDate    string
+}
+
+// NSEDealData represents NSE API response structure
+type NSEDealData struct {
+	Data []map[string]interface{} `json:"data"`
+}
+
+// BSEDealData represents BSE API response structure
+type BSEDealData struct {
+	Table []map[string]interface{} `json:"Table"`
+}
+
+// buildURL constructs the API URL based on exchange and deal type
+func buildURL(config Config) string {
+	switch config.Exchange {
+	case NSE:
+		optionType := "bulk_deals"
+		if config.DealType == BlockDeal {
+			optionType = "block_deals"
+		}
+		return fmt.Sprintf("https://www.nseindia.com/api/historicalOR/bulk-block-short-deals?optionType=%s&from=%s&to=%s",
+			optionType, config.FromDate, config.ToDate)
+	case BSE:
+		dealType := "1" // bulk
+		if config.DealType == BlockDeal {
+			dealType = "2"
+		}
+		return fmt.Sprintf("https://api.bseindia.com/BseIndiaAPI/api/BulkDealData_ng/w?DealType=%s&sc_code=&FDate=%s&TDate=%s",
+			dealType, config.FromDate, config.ToDate)
+	default:
+		return ""
+	}
+}
+
+// fetchDealData fetches deal data from the API
+func fetchDealData(config Config) ([]byte, error) {
+	url := buildURL(config)
+	
+	// Create cookie jar for BSE
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create cookie jar: %w", err)
 	}
 	
 	client := &http.Client{
-		Timeout:   30 * time.Second,
-		Transport: transport,
+		Timeout: 30 * time.Second,
+		Jar:     jar,
 	}
 
-	// Create request
-	req, err := http.NewRequest("GET", nseBaseURL, nil)
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	// Add required headers for NSE
-	req.Header.Set("Accept", "*/*")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+	// Add headers
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+	
+	// Exchange-specific headers
+	if config.Exchange == NSE {
+		req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+		req.Header.Set("Accept-Encoding", "gzip, deflate, br")
+	} else if config.Exchange == BSE {
+		req.Header.Set("Referer", "https://www.bseindia.com/")
+		req.Header.Set("Origin", "https://www.bseindia.com")
+	}
 
-	// Make request
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch CSV: %w", err)
+		return nil, fmt.Errorf("failed to fetch data: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -49,44 +118,52 @@ func fetchBulkDealCSV() ([]byte, error) {
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	// Check if response is gzip compressed
-	var reader io.Reader = resp.Body
-	if resp.Header.Get("Content-Encoding") == "gzip" || resp.Header.Get("Content-Type") == "application/x-gzip" {
-		gzipReader, err := gzip.NewReader(resp.Body)
+	// Read raw data first
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Check content encoding and decompress accordingly
+	contentEncoding := resp.Header.Get("Content-Encoding")
+	
+	if contentEncoding == "br" || (len(data) > 0 && data[0] == 0xce) {
+		// Brotli compression (NSE uses this)
+		brReader := brotli.NewReader(bytes.NewReader(data))
+		data, err = io.ReadAll(brReader)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decompress brotli data: %w", err)
+		}
+	} else if contentEncoding == "gzip" || (len(data) > 2 && data[0] == 0x1f && data[1] == 0x8b) {
+		// Gzip compression
+		gzipReader, err := gzip.NewReader(bytes.NewReader(data))
 		if err != nil {
 			return nil, fmt.Errorf("failed to create gzip reader: %w", err)
 		}
 		defer gzipReader.Close()
-		reader = gzipReader
-	}
-
-	// Read response body (decompressed if needed)
-	data, err := io.ReadAll(reader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
+		
+		data, err = io.ReadAll(gzipReader)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decompress gzip data: %w", err)
+		}
 	}
 
 	return data, nil
 }
 
-// ensureArchiveFolder creates the archive folder if it doesn't exist
-func ensureArchiveFolder() error {
-	err := os.MkdirAll(archiveFolder, 0755)
+// ensureArchiveFolder creates the archive folder structure
+func ensureArchiveFolder(exchange Exchange, dealType DealType) (string, error) {
+	folderPath := filepath.Join(archiveFolder, string(exchange), string(dealType))
+	err := os.MkdirAll(folderPath, 0755)
 	if err != nil {
-		return fmt.Errorf("failed to create archive folder: %w", err)
+		return "", fmt.Errorf("failed to create archive folder: %w", err)
 	}
-	return nil
+	return folderPath, nil
 }
 
-// fileExists checks if a file exists
-func fileExists(filepath string) bool {
-	_, err := os.Stat(filepath)
-	return err == nil
-}
-
-// saveCSVToFile saves the CSV data to a file in the archive folder
-func saveCSVToFile(data []byte, filename string) error {
-	filepath := fmt.Sprintf("%s/%s", archiveFolder, filename)
+// saveJSONToFile saves JSON data to a file
+func saveJSONToFile(data []byte, folderPath, filename string) error {
+	filepath := filepath.Join(folderPath, filename)
 	err := os.WriteFile(filepath, data, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to save file: %w", err)
@@ -94,48 +171,53 @@ func saveCSVToFile(data []byte, filename string) error {
 	return nil
 }
 
-// readAndDisplayCSV reads and displays the CSV content from archive folder
-func readAndDisplayCSV(filename string) error {
-	filepath := fmt.Sprintf("%s/%s", archiveFolder, filename)
-	file, err := os.Open(filepath)
-	if err != nil {
-		return fmt.Errorf("failed to open file: %w", err)
-	}
-	defer file.Close()
+// parseAndDisplayData parses and displays the JSON data
+func parseAndDisplayData(data []byte, config Config) error {
+	fmt.Printf("\n=== %s %s Deal Data ===\n", config.Exchange, config.DealType)
+	fmt.Printf("Date Range: %s to %s\n\n", config.FromDate, config.ToDate)
 
-	reader := csv.NewReader(file)
-	// Allow variable number of fields and handle quotes more flexibly
-	reader.FieldsPerRecord = -1
-	reader.LazyQuotes = true
-	reader.TrimLeadingSpace = true
+	var recordCount int
 	
-	// Read header
-	header, err := reader.Read()
-	if err != nil {
-		return fmt.Errorf("failed to read header: %w", err)
-	}
-
-	fmt.Println("\n=== NSE Bulk Deal Data ===")
-	fmt.Println("\nColumns:", header)
-	fmt.Println("\nData:")
-	fmt.Println("---")
-
-	// Read and display all records
-	recordCount := 0
-	for {
-		record, err := reader.Read()
-		if err == io.EOF {
-			break
+	switch config.Exchange {
+	case NSE:
+		var nseData NSEDealData
+		if err := json.Unmarshal(data, &nseData); err != nil {
+			return fmt.Errorf("failed to parse NSE data: %w", err)
 		}
-		if err != nil {
-			return fmt.Errorf("failed to read record: %w", err)
+		recordCount = len(nseData.Data)
+		
+		if recordCount > 0 {
+			fmt.Println("Sample Records (first 3):")
+			fmt.Println("---")
+			for i, record := range nseData.Data {
+				if i >= 3 {
+					break
+				}
+				fmt.Printf("\nRecord %d:\n", i+1)
+				for key, value := range record {
+					fmt.Printf("  %s: %v\n", key, value)
+				}
+			}
 		}
-
-		recordCount++
-		fmt.Printf("\nRecord %d:\n", recordCount)
-		for i, value := range record {
-			if i < len(header) {
-				fmt.Printf("  %s: %s\n", header[i], value)
+		
+	case BSE:
+		var bseData BSEDealData
+		if err := json.Unmarshal(data, &bseData); err != nil {
+			return fmt.Errorf("failed to parse BSE data: %w", err)
+		}
+		recordCount = len(bseData.Table)
+		
+		if recordCount > 0 {
+			fmt.Println("Sample Records (first 3):")
+			fmt.Println("---")
+			for i, record := range bseData.Table {
+				if i >= 3 {
+					break
+				}
+				fmt.Printf("\nRecord %d:\n", i+1)
+				for key, value := range record {
+					fmt.Printf("  %s: %v\n", key, value)
+				}
 			}
 		}
 	}
@@ -144,50 +226,111 @@ func readAndDisplayCSV(filename string) error {
 	return nil
 }
 
+// formatDateForExchange formats date based on exchange requirements
+func formatDateForExchange(date time.Time, exchange Exchange) string {
+	switch exchange {
+	case NSE:
+		return date.Format("02-01-2006") // DD-MM-YYYY
+	case BSE:
+		return date.Format("01/02/2006") // MM/DD/YYYY
+	default:
+		return date.Format("02-01-2006")
+	}
+}
+
+// processDeal fetches and saves deal data for a specific configuration
+func processDeal(config Config) error {
+	fmt.Printf("\n📊 Processing %s %s deals...\n", config.Exchange, config.DealType)
+	
+	// Create archive folder
+	folderPath, err := ensureArchiveFolder(config.Exchange, config.DealType)
+	if err != nil {
+		return err
+	}
+
+	// Generate filename
+	filename := fmt.Sprintf("%s_%s_%s_to_%s.json",
+		config.Exchange,
+		config.DealType,
+		time.Now().Format("2006-01-02"),
+		time.Now().Format("2006-01-02"))
+
+	// Fetch data
+	data, err := fetchDealData(config)
+	if err != nil {
+		return fmt.Errorf("failed to fetch %s %s data: %w", config.Exchange, config.DealType, err)
+	}
+
+	fmt.Printf("✓ Fetched %d bytes\n", len(data))
+
+	// Save to file
+	err = saveJSONToFile(data, folderPath, filename)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("✓ Saved to: %s\n", filepath.Join(folderPath, filename))
+
+	// Parse and display
+	err = parseAndDisplayData(data, config)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func main() {
-	// Ensure archive folder exists
-	err := ensureArchiveFolder()
-	if err != nil {
-		fmt.Printf("Error creating archive folder: %v\n", err)
-		os.Exit(1)
+	// Get current date
+	now := time.Now()
+	
+	// Start date: January 1, 2026
+	startDate := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	
+	// Define all configurations
+	configs := []Config{
+		{
+			Exchange: NSE,
+			DealType: BulkDeal,
+			FromDate: formatDateForExchange(startDate, NSE),
+			ToDate:   formatDateForExchange(now, NSE),
+		},
+		{
+			Exchange: NSE,
+			DealType: BlockDeal,
+			FromDate: formatDateForExchange(startDate, NSE),
+			ToDate:   formatDateForExchange(now, NSE),
+		},
+		{
+			Exchange: BSE,
+			DealType: BulkDeal,
+			FromDate: formatDateForExchange(startDate, BSE),
+			ToDate:   formatDateForExchange(now, BSE),
+		},
+		{
+			Exchange: BSE,
+			DealType: BlockDeal,
+			FromDate: formatDateForExchange(startDate, BSE),
+			ToDate:   formatDateForExchange(now, BSE),
+		},
 	}
 
-	// Generate filename for today's data
-	filename := fmt.Sprintf("bulk_deals_%s.csv", time.Now().Format("2006-01-02"))
-	filepath := fmt.Sprintf("%s/%s", archiveFolder, filename)
+	fmt.Println("🚀 FlowWatch - Bulk & Block Deal Tracker")
+	fmt.Println("========================================")
+	fmt.Printf("Fetching data from %s to %s\n", startDate.Format("2006-01-02"), now.Format("2006-01-02"))
 
-	// Check if file already exists in archive
-	if fileExists(filepath) {
-		fmt.Printf("File already exists in archive: %s\n", filepath)
-		fmt.Println("Reading from existing file...")
-	} else {
-		fmt.Println("Fetching NSE Bulk Deal CSV...")
-
-		// Fetch CSV data
-		data, err := fetchBulkDealCSV()
+	// Process each configuration
+	successCount := 0
+	for _, config := range configs {
+		err := processDeal(config)
 		if err != nil {
-			fmt.Printf("Error fetching CSV: %v\n", err)
-			os.Exit(1)
+			fmt.Printf("❌ Error processing %s %s: %v\n", config.Exchange, config.DealType, err)
+		} else {
+			successCount++
 		}
-
-		fmt.Printf("Successfully fetched %d bytes\n", len(data))
-
-		// Save to archive folder
-		err = saveCSVToFile(data, filename)
-		if err != nil {
-			fmt.Printf("Error saving CSV: %v\n", err)
-			os.Exit(1)
-		}
-
-		fmt.Printf("Saved to archive: %s\n", filepath)
 	}
 
-	// Read and display CSV content
-	err = readAndDisplayCSV(filename)
-	if err != nil {
-		fmt.Printf("Error reading CSV: %v\n", err)
-		os.Exit(1)
-	}
+	fmt.Printf("\n✅ Successfully processed %d/%d data sources\n", successCount, len(configs))
 }
 
 // Made with Bob
