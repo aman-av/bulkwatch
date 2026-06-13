@@ -1,266 +1,143 @@
-# 📘 Skillbook: Problem-Solving Playbook
+# 📘 Agent Skillbook
 
-A structured guide to approach, analyze, and solve any user request effectively and consistently.
-
----
-
-## 🎯 Purpose
-
-This Skillbook defines a **standard thinking framework** to:
-- Understand user intent
-- Break down problems
-- Produce clear, useful outputs
-- Avoid confusion and inefficiency
+A clear, structured guide for solving problems effectively.
 
 ---
 
-## 🧠 Core Principle
+## 🎯 Core Principle
 
-> ❝ Don’t jump to solutions. First understand the problem deeply. ❞
-
----
-
-## 🔍 1. Understand the Request
-
-Before solving anything:
-
-- What is the user *actually asking*?
-- Is it:
-  - ✅ Informational (explain)
-  - ✅ Instructional (how-to)
-  - ✅ Creative (generate something)
-  - ✅ Technical (fix/build/debug)
-- Identify:
-  - Inputs
-  - Expected output
-  - Constraints
-
-✅ **Rule:** Never assume — interpret carefully.
+> **Think first, then act. Break big problems into small steps.**
 
 ---
 
-## ❓ 2. Clarify (If Needed)
+## 📋 Problem-Solving Process
 
-If the request is unclear:
+### 1. Understand the Request
+- What is the user asking for?
+- What's the expected output?
+- Are there any constraints?
 
-- Identify missing pieces:
-  - Scope?
-  - Format?
-  - Constraints?
-- Ask precise questions OR
-- Proceed with best assumptions (when appropriate)
+### 2. Break Down the Task
+Convert complex requests into simple steps:
+```
+Example: "Centralize API URLs"
+→ Create constants file
+→ Update main.go
+→ Update other files
+→ Test changes
+```
 
-✅ **Rule:** Prefer progress over delay.
+### 3. Execute Step-by-Step
+- Work through one step at a time
+- Wait for confirmation before proceeding
+- Document as you go
 
----
-
-## 🧩 3. Break Down the Problem
-
-Convert the request into smaller steps:
-
-Example:
-
-User Request → Build a Portfolio Website
-Breakdown:
-
-Define sections
-Choose tech stack
-Create layout
-Add content
-Deploy
-
-
-✅ **Rule:** Big problems = small tasks.
+### 4. Validate & Test
+- Does it work correctly?
+- Are there any gaps?
+- Test the changes
 
 ---
 
-## ⚙️ 4. Choose an Approach
+## 📁 Task Management System
 
-Decide how to solve:
+### When to Use
+Use for tasks with:
+- Multiple steps (>3 subtasks)
+- Changes across multiple files
+- Need for progress tracking
 
-- Step-by-step explanation
-- Code solution
-- Conceptual breakdown
-- Example-driven answer
+### Process
 
-✅ Ask yourself:
-- What format helps the user most?
+**1. Create Task Documentation**
+- File: `AGENT/TASK_NAME.md`
+- Include:
+  - Overview
+  - Changes made (before/after)
+  - Files modified
+  - Test results
+  - Rollback instructions
 
----
+**2. Update Task Registry**
+- File: `AGENT/task_registry.json`
+- Add task entry with subtasks
+- Track status and files
 
-## 🛠️ 5. Execute Clearly
+**3. Track Progress**
+- Use `update_todo_list` tool
+- Mark subtasks as completed
+- Update documentation
 
-While solving:
-
-- Be structured
-- Use headings / steps
-- Show examples where possible
-- Keep it clean and readable
-
-✅ Avoid:
-- Over-complication
-- Unnecessary jargon
-- Missing steps
-
----
-
-## 🔄 6. Validate the Solution
-
-Before finishing:
-
-- Does it fully answer the question?
-- Are there gaps?
-- Is it practical?
-
-✅ **Checklist:**
-- [ ] Correct
-- [ ] Complete
-- [ ] Understandable
-- [ ] Actionable
+### File Structure
+```
+AGENT/
+├── README.md              # System guide
+├── task_registry.json     # Task tracking
+└── TASK_NAME.md          # Task documentation
+```
 
 ---
 
-## 🚀 7. Add Value
+## 🔧 Best Practices
 
-Go beyond the basic answer:
-
-- Provide tips
-- Suggest improvements
-- Mention alternatives
-
-Example:
-> “You can also optimize this by…”
-
----
-
-## 📐 Standard Response Template
-
-
-
-Understanding the problem
-Step-by-step solution
-Example (if applicable)
-Tips / improvements
-
-
----
-
-## ⚡ Common Patterns
-
-### 🧑‍💻 Coding Requests
-- Understand input/output
-- Write clean code
-- Explain logic briefly
-
-### 📚 Concept Questions
-- Define clearly
-- Use analogies
-- Give examples
-
-### 🛠️ Debugging
-- Identify issue
-- Explain cause
-- Provide fix
-
-### 🎨 Creative Tasks
-- Follow constraints
-- Be structured
-- Keep coherence
-
----
-
-## 🚫 Common Mistakes
-
-- Jumping to conclusions
-- Ignoring user intent
-- Over-explaining trivial details
-- Providing incomplete solutions
-- Not validating output
-
----
-
-## 🧭 Golden Rules
-
-- ✔ Think before answering  
-- ✔ Structure everything  
-- ✔ Be helpful, not just correct  
-- ✔ Make it easy to understand  
-- ✔ Always aim for clarity  
-
----
-
-## 📈 Continuous Improvement
-
-After solving:
-
-- What could be better?
-- Was it too long/short?
-- Did it fully help the user?
-
----
-
-## 📝 Example Workflow
-
-
-User: "How do I build a REST API?"
-→ Understand: They want a guide
-→ Break down:
-
-What is REST
-Setup server
-Define routes
-Test API
-→ Provide step-by-step solution
-→ Add tips (validation, security)
-
-
----
-
-## ✅ Final Thought
-
-> A good answer solves the problem.  
-
----
-
-## 🔧 API Integration Best Practices
-
-### Learned from NSE/BSE Integration
-
-**1. Investigate Before Coding**
-- Use browser DevTools Network tab to inspect actual API calls
+### API Integration
+- Inspect API calls in browser DevTools first
 - Check response headers (Content-Type, Content-Encoding)
-- Test with curl before writing code
-- Never assume - verify compression, auth, and format
+- Test with curl before coding
+- Handle compression (gzip, brotli, deflate)
 
-**2. Handle Compression Properly**
-- Check `Content-Encoding` header first
-- Support multiple methods: gzip, brotli, deflate
-- Fall back to magic byte detection if header missing
-- Common error: `invalid character 'ð'` = compressed data
-
-**3. Multi-Provider Design**
-- Create abstraction layer for common functionality
-- Isolate provider-specific logic
-- Use config/strategy pattern for differences
-- Test each provider independently
-
-**4. Iterative Problem Solving**
-- Make small, testable changes
-- Gather data after each attempt
-- User feedback is valuable - ask for headers/logs
-- Each iteration should take < 5 minutes
-
-**5. Error Messages Are Clues**
+### Error Handling
 - `invalid character '<'` → HTML response (auth failure)
 - `invalid character 'ð'` → Compressed data
 - `unexpected EOF` → Incomplete response
 - `connection reset` → Rate limiting
 
-**6. Privacy Transparency**
-- Explain what data is collected/sent
-- Clarify storage location (memory vs disk)
-- State persistence duration
-- Be clear about third-party sharing
+### Code Changes
+- Make small, testable changes
+- Gather feedback after each step
+- Document what was changed and why
+- Provide rollback instructions
 
 ---
-> A great answer makes it easy to understand and reuse.
+
+## ✅ Golden Rules
+
+1. **Think before acting** - Understand the problem first
+2. **Break it down** - Small steps are easier
+3. **Document everything** - For future reference
+4. **Test thoroughly** - Verify it works
+5. **Be clear** - Simple explanations are best
+
+---
+
+## 📝 Example Workflow
+
+```
+Task: "Centralize API URLs"
+
+1. Break down:
+   ✓ Create constants.go
+   ✓ Update main.go
+   ✓ Update bse_shareholding.go
+   ✓ Update symbol_mapper
+   ✓ Test all URLs
+
+2. Document:
+   - Create AGENT/DEBUG_URL_CONSTANTS.md
+   - Update AGENT/task_registry.json
+   - Track with update_todo_list
+
+3. Test:
+   - Build project
+   - Run tests
+   - Verify URLs work
+
+4. Complete:
+   - Mark all subtasks done
+   - Document results
+   - Provide summary
+```
+
+---
+
+**Remember:** Clear thinking → Clear code → Clear results

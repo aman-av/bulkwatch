@@ -1,0 +1,6 @@
+.vscode
+AGENT
+archive/
+*.csv
+*.json
+*.http

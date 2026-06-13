@@ -61,15 +61,13 @@ func buildURL(config Config) string {
 		if config.DealType == BlockDeal {
 			optionType = "block_deals"
 		}
-		return fmt.Sprintf("https://www.nseindia.com/api/historicalOR/bulk-block-short-deals?optionType=%s&from=%s&to=%s",
-			optionType, config.FromDate, config.ToDate)
+		return BuildNSEBulkBlockURL(optionType, config.FromDate, config.ToDate)
 	case BSE:
 		dealType := "1" // bulk
 		if config.DealType == BlockDeal {
 			dealType = "2"
 		}
-		return fmt.Sprintf("https://api.bseindia.com/BseIndiaAPI/api/BulkDealData_ng/w?DealType=%s&sc_code=&FDate=%s&TDate=%s",
-			dealType, config.FromDate, config.ToDate)
+		return BuildBSEBulkBlockURL(dealType, config.FromDate, config.ToDate)
 	default:
 		return ""
 	}
@@ -104,8 +102,8 @@ func fetchDealData(config Config) ([]byte, error) {
 		req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 		req.Header.Set("Accept-Encoding", "gzip, deflate, br")
 	} else if config.Exchange == BSE {
-		req.Header.Set("Referer", "https://www.bseindia.com/")
-		req.Header.Set("Origin", "https://www.bseindia.com")
+		req.Header.Set("Referer", BSEReferer)
+		req.Header.Set("Origin", BSEOrigin)
 	}
 
 	resp, err := client.Do(req)
@@ -232,7 +230,7 @@ func formatDateForExchange(date time.Time, exchange Exchange) string {
 	case NSE:
 		return date.Format("02-01-2006") // DD-MM-YYYY
 	case BSE:
-		return date.Format("01/02/2006") // MM/DD/YYYY
+		return date.Format("02/01/2006") // DD/MM/YYYY
 	default:
 		return date.Format("02-01-2006")
 	}
@@ -331,6 +329,11 @@ func main() {
 	}
 
 	fmt.Printf("\n✅ Successfully processed %d/%d data sources\n", successCount, len(configs))
+	
+	// Enrich all deals with shareholding classification
+	if err := enrichAllDeals(); err != nil {
+		fmt.Printf("⚠️  Error enriching deals: %v\n", err)
+	}
 }
 
 // Made with Bob
