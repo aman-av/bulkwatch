@@ -25,13 +25,26 @@ type DealsSummary struct {
 }
 
 // enrichDealsFile enriches a deals file with classification data
-func enrichDealsFile(exchange Exchange, dealType DealType) error {
-	fmt.Printf("\n📝 Enriching %s %s deals...\n", exchange, dealType)
+func enrichDealsFile(exchange Exchange, dealType DealType, fileDate string) error {
+	state := GetState()
+
+	// Check if already enriched
+	enrichedFilename := fmt.Sprintf("archive/%s/%s/%s_%s_enriched_%s.json",
+		exchange, dealType, exchange, dealType, fileDate)
+
+	if _, err := os.Stat(enrichedFilename); err == nil {
+		// Enriched file exists, check if we need to re-enrich
+		if !state.NeedsEnrichment(exchange, dealType, fileDate) {
+			fmt.Printf("\n⏭️  Skipping %s %s (%s) - already enriched\n", exchange, dealType, fileDate)
+			return nil
+		}
+	}
+
+	fmt.Printf("\n📝 Enriching %s %s deals (%s)...\n", exchange, dealType, fileDate)
 
 	// Read original file
 	filename := fmt.Sprintf("archive/%s/%s/%s_%s_%s_to_%s.json",
-		exchange, dealType, exchange, dealType,
-		time.Now().Format("2006-01-02"), time.Now().Format("2006-01-02"))
+		exchange, dealType, exchange, dealType, fileDate, fileDate)
 
 	data, err := os.ReadFile(filename)
 	if err != nil {
@@ -68,7 +81,7 @@ func enrichDealsFile(exchange Exchange, dealType DealType) error {
 	}
 
 	// Fetch shareholding data for unique symbols in parallel
-	fmt.Printf("  Fetching shareholding data for %d unique symbols (parallel with 1000 workers)...\n", len(symbolDeals))
+	fmt.Printf("  Fetching shareholding data for %d unique symbols (parallel with 100 workers)...\n", len(symbolDeals))
 	shareholdingCache := make(map[string]*BSEShareholdingData)
 	var cacheMutex sync.RWMutex
 
@@ -208,9 +221,6 @@ func enrichDealsFile(exchange Exchange, dealType DealType) error {
 	}
 
 	// Save enriched file
-	enrichedFilename := fmt.Sprintf("archive/%s/%s/%s_%s_enriched_%s.json",
-		exchange, dealType, exchange, dealType, time.Now().Format("2006-01-02"))
-
 	enrichedData, err := json.MarshalIndent(enrichedFile, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal enriched data: %w", err)
@@ -220,6 +230,10 @@ func enrichDealsFile(exchange Exchange, dealType DealType) error {
 		return fmt.Errorf("failed to write enriched file: %w", err)
 	}
 
+	// Update state
+	state.SetLastEnriched(exchange, dealType, fileDate)
+	state.IncrementDealsEnriched(len(deals))
+
 	fmt.Printf("\n  ✅ Saved enriched file: %s\n", enrichedFilename)
 	fmt.Printf("  📊 Summary: Promoter=%d | FII=%d | DII=%d | Public=%d\n",
 		summary.PromoterDeals, summary.FIIDeals, summary.DIIDeals, summary.PublicDeals)
@@ -227,11 +241,16 @@ func enrichDealsFile(exchange Exchange, dealType DealType) error {
 	return nil
 }
 
-// enrichAllDeals enriches all deal files
+// enrichAllDeals enriches all deal files (incremental)
 func enrichAllDeals() error {
+	state := GetState()
+
 	fmt.Println("\n" + strings.Repeat("=", 80))
-	fmt.Println("📊 ENRICHING DEALS WITH SHAREHOLDING CLASSIFICATION")
+	fmt.Println("📊 ENRICHING DEALS WITH SHAREHOLDING CLASSIFICATION (INCREMENTAL)")
 	fmt.Println(strings.Repeat("=", 80))
+
+	// Print current state
+	state.PrintStatus()
 
 	configs := []struct {
 		Exchange Exchange
@@ -243,13 +262,44 @@ func enrichAllDeals() error {
 		{BSE, BulkDeal},
 	}
 
+	// Get today's date
+	today := time.Now().Format("2006-01-02")
+
+	enrichedCount := 0
+	skippedCount := 0
+
 	for _, config := range configs {
-		if err := enrichDealsFile(config.Exchange, config.DealType); err != nil {
+		// Check if file exists for today
+		filename := fmt.Sprintf("archive/%s/%s/%s_%s_%s_to_%s.json",
+			config.Exchange, config.DealType, config.Exchange, config.DealType,
+			today, today)
+
+		if _, err := os.Stat(filename); os.IsNotExist(err) {
+			fmt.Printf("\n⏭️  Skipping %s %s - no data file for %s\n",
+				config.Exchange, config.DealType, today)
+			skippedCount++
+			continue
+		}
+
+		if err := enrichDealsFile(config.Exchange, config.DealType, today); err != nil {
 			fmt.Printf("❌ Error enriching %s %s: %v\n", config.Exchange, config.DealType, err)
+		} else {
+			enrichedCount++
 		}
 	}
 
-	fmt.Println("\n✅ Enrichment complete!")
+	// Save state
+	if err := state.Save(); err != nil {
+		fmt.Printf("⚠️  Warning: Failed to save state: %v\n", err)
+	}
+
+	fmt.Println("\n" + strings.Repeat("=", 80))
+	fmt.Printf("✅ Enrichment complete! Enriched: %d | Skipped: %d\n", enrichedCount, skippedCount)
+	fmt.Println(strings.Repeat("=", 80))
+
+	// Print updated state
+	state.PrintStatus()
+
 	return nil
 }
 
